@@ -27,7 +27,7 @@ struct InnerReactor {
 
 impl Reactor {
     /// Create a new instance of `Reactor`
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             inner: Rc::new(RefCell::new(InnerReactor {
                 poller: Poller::new(),
