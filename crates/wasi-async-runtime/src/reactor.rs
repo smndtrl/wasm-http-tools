@@ -1,10 +1,11 @@
 use super::polling::{EventKey, Poller};
 
-use alloc::rc::Rc;
-use core::cell::RefCell;
+use alloc::sync::Arc;
+use core::borrow::BorrowMut;
 use core::future;
 use core::task::Poll;
 use core::task::Waker;
+use std::sync::RwLock;
 #[cfg(not(feature = "std"))]
 use hashbrown::HashMap;
 #[cfg(feature = "std")]
@@ -14,7 +15,7 @@ use wasi::io::poll::Pollable;
 /// Manage async system resources for WASI 0.2
 #[derive(Debug, Clone)]
 pub struct Reactor {
-    inner: Rc<RefCell<InnerReactor>>,
+    inner: Arc<RwLock<InnerReactor>>,
 }
 
 /// The private, internal `Reactor` implementation - factored out so we can take
@@ -29,7 +30,7 @@ impl Reactor {
     /// Create a new instance of `Reactor`
     pub fn new() -> Self {
         Self {
-            inner: Rc::new(RefCell::new(InnerReactor {
+            inner: Arc::new(RwLock::new(InnerReactor {
                 poller: Poller::new(),
                 wakers: HashMap::new(),
             })),
@@ -49,7 +50,10 @@ impl Reactor {
     /// reason that we have to call all the wakers - even if by default they
     /// will do nothing.
     pub(crate) fn block_until(&self) {
-        let mut reactor = self.inner.borrow_mut();
+        // Create a binding to hold the RwLockWriteGuard
+        let mut reactor_guard = self.inner.write().unwrap();
+        
+        let reactor = reactor_guard.borrow_mut();
         for key in reactor.poller.block_until() {
             match reactor.wakers.get(&key) {
                 Some(waker) => waker.wake_by_ref(),
@@ -63,12 +67,15 @@ impl Reactor {
         let mut pollable = Some(pollable);
         let mut key = None;
 
+        // Create a binding to hold the RwLockWriteGuard
+        let mut reactor_guard = self.inner.write().unwrap();
+
         // This function is the core loop of our function; it will be called
         // multiple times as the future is resolving.
         future::poll_fn(|cx| {
             // Start by taking a lock on the reactor. This is single-threaded
             // and short-lived, so it will never be contended.
-            let mut reactor = self.inner.borrow_mut();
+            let reactor = reactor_guard.borrow_mut();
 
             // Schedule interest in the `pollable` on the first iteration. On
             // every iteration, register the waker with the reactor.
